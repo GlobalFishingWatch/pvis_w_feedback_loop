@@ -1,0 +1,81 @@
+---
+title: "vessel_identity)matching"
+author: "Willa Brooks"
+date: "12/16/2022"
+output:
+  html_document:
+    code_download: true
+    theme: united
+    highlight: tango
+    keep_md: true
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("final_output")) })
+---
+
+```{r setup, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+##set working directory
+#setwd("/Users/willarosebrooks/Documents/GitHub_GFW/product-data-qa/vessel-database-api/")
+
+# Default packages
+rm(list = ls())
+
+library(tidyverse, quietly = T)
+library(fishwatchr)
+library(lubridate)
+library(glue)
+
+# BigQuery connection
+con <- DBI::dbConnect(bigrquery::bigquery(), 
+                      project = "world-fishing-827", 
+                      page_size = 5000,
+                      use_legacy_sql = FALSE)
+```
+
+Query 1 to get vessel id to vessel record id link
+## query already run and scratch table already in willa scratch bin 
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide', eval=FALSE}
+ 
+query_one <- readr::read_file(
+  file = here::here("queries", "query_1_vid_link_v3.sql")
+)
+
+vid_full_table <-
+    fishwatchr::gfw_query(
+    query = query_one,
+    run_query = TRUE,
+    con = con
+  )$data
+```
+
+Matching query
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+
+## load query
+pull_data = paste('
+SELECT * 
+FROM `world-fishing-827.scratch_willa_ttl100.vessel_record_vessel_id_matching_2023jan18_all_vessles` 
+')
+
+## run encounters query
+v2_data <-
+  fishwatchr::gfw_query(
+    query = pull_data,
+    run_query = TRUE,
+    con = con
+  )$data
+```
+
+Analysis
+
+to consider
+## distribution of matches by vessel_record_id -- how much overlap is there where vessel_record_id is connected to both high and medium/low match
+## look at distribution of pos_count for low and medium confidence -- to see if lower confidence matches have any trends in being vessel_id's with high or low number of positions 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+## add analysis
+
+TBD
+```
+
+
