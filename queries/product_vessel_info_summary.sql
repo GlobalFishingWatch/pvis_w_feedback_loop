@@ -291,7 +291,7 @@ WITH
                 END AS prod_shiptype,
             -- geartype
             CASE
-                WHEN has_feedback_override THEN feedback_shiptype
+                WHEN has_feedback_override THEN feedback_geartype
                 WHEN in_support_list THEN 'purse_seine_support'
                 WHEN core_is_carrier THEN 'carrier'
                 WHEN core_is_bunker THEN 'bunker'
