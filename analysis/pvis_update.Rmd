@@ -1,7 +1,7 @@
 ---
-title: "vessel_identity)matching"
+title: "pvis_update"
 author: "Willa Brooks"
-date: "12/16/2022"
+date: "12/11/2025"
 output:
   html_document:
     code_download: true
@@ -14,7 +14,7 @@ knit: (function(inputFile, encoding) {
 
 ```{r setup, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
 ##set working directory
-#setwd("/Users/willarosebrooks/Documents/GitHub_GFW/product-data-qa/vessel-database-api/")
+#setwd("/Users/willarosebrooks/Documents/GitHub_GFW/pvis/pvis_update/")
 
 # Default packages
 rm(list = ls())
@@ -36,7 +36,7 @@ Query 1 to get vessel id to vessel record id link
 ```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide', eval=FALSE}
  
 query_one <- readr::read_file(
-  file = here::here("queries", "query_1_vid_link_v3.sql")
+  file = here::here("queries", "query_1.sql")
 )
 
 vid_full_table <-
