@@ -402,6 +402,44 @@ WITH
                 WHEN rf_vessel_class IS NULL THEN 'insufficient data'
                 ELSE rf_vessel_class
                 END AS prod_vessel_class,
+             -- NEW current shiptype + RF predictions + feedback loop
+            CASE
+                WHEN has_feedback_override THEN feedback_shiptype
+                WHEN in_support_list THEN 'support'
+                WHEN core_is_carrier THEN 'carrier'
+                WHEN core_is_bunker THEN 'bunker'
+                WHEN likely_gear OR rf_vessel_class = 'gear' THEN 'gear'
+                WHEN rf_coarse_class = 'fishing' THEN 'fishing'
+                WHEN rf_vessel_class = 'cargo' THEN 'cargo'
+                WHEN rf_vessel_class = 'passenger' THEN 'passenger'
+                WHEN rf_vessel_class = 'seismic_vessel' THEN 'seismic_vessel'
+                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
+                ELSE 'other_non_fishing'
+                END AS prod_shiptype_rf,
+            -- NEW current geartype + RF predictions + feedback loop
+            CASE
+                WHEN has_feedback_override THEN feedback_geartype
+                WHEN in_support_list THEN 'purse_seine_support'
+                WHEN core_is_carrier THEN 'carrier'
+                WHEN core_is_bunker THEN 'bunker'
+                WHEN likely_gear OR rf_vessel_class = 'gear' THEN 'gear'
+                WHEN rf_coarse_class = 'fishing' THEN rf_vessel_class
+                WHEN rf_vessel_class = 'cargo' THEN 'cargo'
+                WHEN rf_vessel_class = 'passenger' THEN 'passenger'
+                WHEN rf_vessel_class = 'seismic_vessel' THEN 'seismic_vessel'
+                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
+                ELSE 'other_non_fishing'
+                END AS prod_geartype_rf,
+            -- NEW current geartype source + RF predictions + feedback loop
+            CASE
+                WHEN has_feedback_override THEN 'verified_feedback'
+                WHEN in_support_list THEN 'support_vessel_list'
+                WHEN core_is_carrier THEN 'core_is_carrier'
+                WHEN core_is_bunker THEN 'core_is_bunker'
+                WHEN likely_gear THEN 'shipname_likely_gear'
+                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
+                ELSE 'machine_learning_prediction'
+                END AS prod_geartype_source_rf,
             -- current shiptype + feedback loop
             CASE
                 WHEN has_feedback_override THEN feedback_shiptype
@@ -420,7 +458,6 @@ WITH
             -- current geartype + feedback loop
             CASE
                 WHEN has_feedback_override THEN feedback_geartype
-                WHEN likely_gear THEN 'gear'
                 WHEN in_support_list THEN 'purse_seine_support'
                 WHEN core_is_carrier THEN 'carrier'
                 WHEN core_is_bunker THEN 'bunker'
@@ -453,7 +490,7 @@ WITH
                 WHEN offsetting OR overlap_hours_multinames >= 24 THEN TRUE
                 ELSE FALSE
                 END AS noisy_vessel
-        FROM rf_vi_ssvid --vi_api_join
+        FROM rf_vi_ssvid 
     ),
 
     ## add chunk of select fields that are easier to look at
@@ -514,6 +551,10 @@ SELECT DISTINCT
     -- NEW add vessel assignments with RF model predictions
     prod_coarse_class,
     prod_vessel_class,
+    -- NEW switch out NN with RF model predictions with previous product vessel class assignments
+    prod_shiptype_rf,
+    prod_geartype_rf,
+    prod_geartype_source_rf,
     -- previous product vessel class assignments
     prod_shiptype,
     prod_geartype,
