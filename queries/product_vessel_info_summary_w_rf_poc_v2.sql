@@ -114,8 +114,7 @@ WITH
     ),
     
     ### add rf vessel class
-    ### need to determine how to handle gear and if we use rf_vessel_class or rf_best_vessel_class 
-    ### note predictions are null when there is not enough dat afor the model, which should reflect
+    ### note predictions are null when there is not enough data for the model, which should reflect
     ### low_activity fields being TRUE
   source_rf AS (
         SELECT
@@ -148,14 +147,6 @@ WITH
                 ORDER BY ag.prob DESC
                 LIMIT 1
             ) AS rf_coarse_class_score,
---             (
---                 SELECT p.prob
---                 FROM UNNEST(rf.rf_is_fishing_probs) AS p
---                 ORDER BY p.prob DESC
---                 LIMIT 1
---             ) AS rf_coarse_class_score,
-            -- to remove rf_is_fishing_probs by here for comparision
-            rf_is_fishing_probs,
         ## atomic class and atomic class score
             rf_atomic_class,
             rf_atomic_class_score,
@@ -167,14 +158,10 @@ WITH
     			WHERE ag.label = rf_vessel_class
     			LIMIT 1
   			) AS rf_vessel_class_score,
-            -- to remove rf_aggregated_scores by here for comparision
-            rf_aggregated_scores,
-        ## confidence fields - still determining what to do
-                    rf_vessel_class_confidence,
-                    on_fishing_list_rf,
-                    rf_best_vessel_class, 
-                    on_fishing_list_rf_best,
-                    on_fishing_list_rf_confidence,
+        ## confidence fields
+            on_fishing_list_rf,
+            on_fishing_list_rf_confidence,
+            rf_vessel_class_confidence,
         ## vessel characteristics
             rf_best_length_m,
             rf_best_tonnage_gt,
@@ -236,12 +223,6 @@ WITH
     		feedback_vessel_class,
     		raw_feedback_vessel_class,
     		feedback_review_date,
-    	-- NEW vessel category/coarse type	
-    	    CASE
-      		WHEN feedback_vessel_class IN (SELECT fv FROM fishing_classes) THEN 'fishing'
-      		WHEN feedback_vessel_class = 'gear' THEN 'gear'
-      		ELSE 'non_fishing'
-    		END AS feedback_coarse_class,
     	-- shiptype
     		CASE
       		WHEN feedback_vessel_class IN (SELECT fv FROM fishing_classes) THEN 'fishing'
@@ -249,7 +230,7 @@ WITH
         	'support','carrier','bunker','discrepancy','gear',
         	'cargo','passenger','seismic_vessel'
       		) THEN feedback_vessel_class
-      		ELSE 'other'
+      		ELSE 'other_non_fishing'
     		END AS feedback_shiptype,
     	-- geartype
     		CASE
@@ -302,9 +283,10 @@ WITH
     ),
 
 	### RF model and vi_ssvid_byyear values
-    vi_ssvid_by_year AS (
+    rf_vi_ssvid AS (
         SELECT
             api_and_feedback.* EXCEPT (ssvid, year),
+            source_rf.* EXCEPT (ssvid),
             ship.shipname_count AS shipname_count,
             vi.*,
             best.best_flag AS gfw_best_flag,
@@ -332,7 +314,7 @@ WITH
             ) as best_best_fishing,
             -- new boolean to see if vessel on any our fishing lists, with exception of self reported list
             CASE
-                WHEN on_fishing_list_known OR on_fishing_list_nn OR on_fishing_list_best OR best.best_vessel_class IN (select fv FROM fishing_classes) OR api_and_feedback.feedback_shiptype = 'fishing' THEN TRUE
+                WHEN on_fishing_list_rf OR on_fishing_list_known OR on_fishing_list_nn OR on_fishing_list_best OR best.best_vessel_class IN (select fv FROM fishing_classes) OR api_and_feedback.feedback_shiptype = 'fishing' THEN TRUE
                 ELSE FALSE
                 END AS potential_fishing,
             -- add potential_fishing vessel class SOURCE to use
@@ -342,7 +324,7 @@ WITH
                         WHEN on_fishing_list_best THEN 'on_fishing_list_best'
                         WHEN best.best_vessel_class IN (select fv FROM fishing_classes) THEN 'best_vessel_class'
                         WHEN on_fishing_list_known THEN 'registry'
-                        WHEN on_fishing_list_nn THEN 'inferred'
+                        WHEN on_fishing_list_rf OR on_fishing_list_nn THEN 'inferred'
                         ELSE NULL END) AS potential_fishing_source,
             -- mmsi and year in support by year table
             ssvid IN (
@@ -358,19 +340,11 @@ WITH
             ) as mmsi_recycling,
         FROM api_and_feedback 
             LEFT JOIN source_vi_ssvid_by_year as vi 
-        		  USING (ssvid, year)
+        		USING (ssvid, year)
+            LEFT JOIN source_rf
+        		USING (ssvid)
             LEFT JOIN shipname_count as ship 
-              USING (ssvid, year)
-    ),
-
-    ### NEW: merge vi_ssvid and RF predictions
-    rf_vi_ssvid AS (
-      SELECT
-      source_rf.*,
-      vi_ssvid_by_year.* EXCEPT (ssvid),
-      FROM vi_ssvid_by_year
-      LEFT JOIN source_rf
-        USING (ssvid)
+            	USING (ssvid, year)
     ),
 
     ### add fields for products
@@ -378,30 +352,6 @@ WITH
     av_populate_fields AS (
         SELECT
             *,
-            -- NEW vessel category/coarse field
-            -- pull from verified corrections
-            -- then if on targeted list of support vessels
-            -- this if shipname associated with likely gear
-            -- then use RF model prediction 
-            CASE
-                WHEN has_feedback_override THEN feedback_coarse_class
-                WHEN in_support_list THEN 'non_fishing'
-                WHEN likely_gear THEN 'gear'
-                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
-                ELSE rf_coarse_class
-                END AS prod_coarse_class,
-            -- NEW vessel type field 
-            -- pull from verified corrections
-            -- then if on targeted list of support vessels
-            -- this if shipname associated with likely gear
-            -- then use RF model prediction 
-            CASE
-                WHEN has_feedback_override THEN feedback_vessel_class 
-                WHEN in_support_list THEN 'purse_seine_support'
-                WHEN likely_gear THEN 'gear'
-                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
-                ELSE rf_vessel_class
-                END AS prod_vessel_class,
              -- NEW current shiptype + RF predictions + feedback loop
             CASE
                 WHEN has_feedback_override THEN feedback_shiptype
@@ -413,7 +363,7 @@ WITH
                 WHEN rf_vessel_class = 'cargo' THEN 'cargo'
                 WHEN rf_vessel_class = 'passenger' THEN 'passenger'
                 WHEN rf_vessel_class = 'seismic_vessel' THEN 'seismic_vessel'
-                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
+                WHEN rf_vessel_class IS NULL THEN 'insufficient_data'
                 ELSE 'other_non_fishing'
                 END AS prod_shiptype_rf,
             -- NEW current geartype + RF predictions + feedback loop
@@ -427,7 +377,7 @@ WITH
                 WHEN rf_vessel_class = 'cargo' THEN 'cargo'
                 WHEN rf_vessel_class = 'passenger' THEN 'passenger'
                 WHEN rf_vessel_class = 'seismic_vessel' THEN 'seismic_vessel'
-                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
+                WHEN rf_vessel_class IS NULL THEN 'insufficient_data'
                 ELSE 'other_non_fishing'
                 END AS prod_geartype_rf,
             -- NEW current geartype source + RF predictions + feedback loop
@@ -437,87 +387,42 @@ WITH
                 WHEN core_is_carrier THEN 'core_is_carrier'
                 WHEN core_is_bunker THEN 'core_is_bunker'
                 WHEN likely_gear THEN 'shipname_likely_gear'
-                WHEN rf_vessel_class IS NULL THEN 'insufficient data'
+                WHEN rf_vessel_class IS NULL THEN 'not_applicable'
                 ELSE 'machine_learning_prediction'
                 END AS prod_geartype_source_rf,
-            -- current shiptype + feedback loop
-            CASE
-                WHEN has_feedback_override THEN feedback_shiptype
-                WHEN in_support_list THEN 'support'
-                WHEN core_is_carrier THEN 'carrier'
-                WHEN core_is_bunker THEN 'bunker'
-                WHEN (NOT on_fishing_list_best AND NOT best_best_fishing) AND ( ((on_fishing_list_known
-                    AND NOT on_fishing_list_nn) OR (NOT on_fishing_list_known AND on_fishing_list_nn)) ) THEN 'discrepancy'
-                WHEN best_vessel_class = 'gear' THEN 'gear'
-                WHEN potential_fishing THEN 'fishing'
-                WHEN best_vessel_class = 'cargo' THEN 'cargo'
-                WHEN best_vessel_class = 'passenger' THEN 'passenger'
-                WHEN best_vessel_class = 'seismic_vessel' THEN 'seismic_vessel'
-                ELSE 'other'
-                END AS prod_shiptype,
-            -- current geartype + feedback loop
-            CASE
-                WHEN has_feedback_override THEN feedback_geartype
-                WHEN in_support_list THEN 'purse_seine_support'
-                WHEN core_is_carrier THEN 'carrier'
-                WHEN core_is_bunker THEN 'bunker'
-                WHEN (NOT on_fishing_list_best AND NOT best_best_fishing) AND ( ((on_fishing_list_known
-                    AND NOT on_fishing_list_nn) OR (NOT on_fishing_list_known AND on_fishing_list_nn)) ) THEN 'inconclusive'
-                WHEN best_vessel_class = 'gear' THEN 'gear'
-                WHEN potential_fishing THEN IF (best_vessel_class IS null, 'inconclusive', best_vessel_class)
-                WHEN best_vessel_class = 'cargo' THEN 'cargo'
-                WHEN best_vessel_class = 'passenger' THEN 'passenger'
-                WHEN best_vessel_class = 'seismic_vessel' THEN 'seismic_vessel'
-                ELSE 'other'
-                END AS prod_geartype,
-            -- current geartype source + feedback loop
-            CASE
-                WHEN has_feedback_override THEN 'verified_feedback'
-                WHEN in_support_list THEN 'support_vessel_list'
-                WHEN core_is_carrier THEN 'core_is_carrier'
-                WHEN core_is_bunker THEN 'core_is_bunker'
-                WHEN (NOT on_fishing_list_best AND NOT best_best_fishing) AND ( ((on_fishing_list_known
-                    AND NOT on_fishing_list_nn) OR (NOT on_fishing_list_known AND on_fishing_list_nn)) ) THEN 'gfw_research_vi_ssvid_fishing_list_nn_and_known'
-                WHEN best_vessel_class = 'gear' THEN 'gfw_research_vi_ssvid_best_vessel_class'
-                WHEN potential_fishing THEN 'gfw_research_vi_ssvid_best_vessel_class'
-                WHEN best_vessel_class = 'cargo' THEN 'gfw_research_vi_ssvid_best_vessel_class'
-                WHEN best_vessel_class = 'passenger' THEN 'gfw_research_vi_ssvid_best_vessel_class'
-                WHEN best_vessel_class = 'seismic_vessel' THEN 'gfw_research_vi_ssvid_best_vessel_class'
-                ELSE 'not_applicable'
-                END AS prod_geartype_source,   
             -- noisy
             CASE
                 WHEN offsetting OR overlap_hours_multinames >= 24 THEN TRUE
                 ELSE FALSE
                 END AS noisy_vessel
         FROM rf_vi_ssvid 
-    ),
+    )--,
 
-    ## add chunk of select fields that are easier to look at
-    all_vessels AS (
-        SELECT
-            * EXCEPT(
-            activity,
-            ais_identity, inferred, registry_info, best, on_fishing_list_known, on_fishing_list_nn,
-            row, best_best_fishing
-            )
-        FROM av_populate_fields
-    )
-
-    -- ## For the versions between December to June, we copy the vessels for the last year to the new year
-    -- all_vessels_extended AS (
-    --     SELECT
-    --         * EXCEPT(year),
-    --         year
-    --     FROM all_vessels
-    --     WHERE year <= IF(get_month() > 11, get_current_year(), IF (get_month() < 6,  get_previous_year(), get_next_year()) )
-    --     UNION ALL
-    --     SELECT
-    --         * EXCEPT(year),
-    --         IF(get_month() > 11, get_next_year(), IF (get_month() < 6,  get_current_year(), year) ) as year
-    --     FROM all_vessels
-    --     WHERE year = IF(get_month() > 11,  get_current_year(), IF (get_month() < 6,  get_previous_year(), null) )
-    -- )
+--     ## add chunk of select fields that are easier to look at
+--     all_vessels AS (
+--         SELECT
+--             * EXCEPT(
+--             activity,
+--             ais_identity, inferred, registry_info, best, on_fishing_list_known, on_fishing_list_nn,
+--             row, best_best_fishing
+--             )
+--         FROM av_populate_fields
+--     )
+-- 
+--     ## For the versions between December to June, we copy the vessels for the last year to the new year
+--     all_vessels_extended AS (
+--         SELECT
+--             * EXCEPT(year),
+--             year
+--         FROM all_vessels
+--         WHERE year <= IF(get_month() > 11, get_current_year(), IF (get_month() < 6,  get_previous_year(), get_next_year()) )
+--         UNION ALL
+--         SELECT
+--             * EXCEPT(year),
+--             IF(get_month() > 11, get_next_year(), IF (get_month() < 6,  get_current_year(), year) ) as year
+--         FROM all_vessels
+--         WHERE year = IF(get_month() > 11,  get_current_year(), IF (get_month() < 6,  get_previous_year(), null) )
+--     )
 
 SELECT DISTINCT
     vessel_id,
@@ -531,9 +436,9 @@ SELECT DISTINCT
     core_flag,
     -- NEW add feedback loop data -- address when values are null
     feedback_vessel_class,
-    raw_feedback_vessel_class,
-    has_feedback_override,
-    feedback_review_date,
+    -- raw_feedback_vessel_class, -- if want fewer fields, then don't include
+    -- has_feedback_override, -- if want fewer fields, then don't include
+    -- feedback_review_date, -- if want fewer fields, then don't include
     -- NEW add self reported shiptype -- adress when values are null 
     self_reported_shiptype,
     -- NEW add RF predictions and probability scores 
@@ -544,29 +449,21 @@ SELECT DISTINCT
     rf_atomic_class,
     rf_atomic_class_score,
     -- previous vessel class information 
-    best_vessel_class,
-    registry_vessel_class,
-    inferred_vessel_class_ag,
-    core_geartype,
-    -- NEW add vessel assignments with RF model predictions
-    prod_coarse_class,
-    prod_vessel_class,
+    -- best_vessel_class,
+    -- registry_vessel_class,
+    -- inferred_vessel_class_ag,
+    core_geartype, -- registry gear type, pulled from identity core table
     -- NEW switch out NN with RF model predictions with previous product vessel class assignments
     prod_shiptype_rf,
     prod_geartype_rf,
     prod_geartype_source_rf,
-    -- previous product vessel class assignments
-    prod_shiptype,
-    prod_geartype,
-    prod_geartype_source,
     core_is_carrier,
     core_is_bunker,
     in_support_list,
-    -- NEW add if fishing vesssel by rf model
-    rf_vessel_class_confidence,
-    on_fishing_list_rf,
-    on_fishing_list_rf_best,
-	  on_fishing_list_rf_confidence, 
+    -- NEW add if fishing vesssel by rf model and source agreement fields
+    rf_vessel_class_confidence as vessel_class_source_agreement, 
+	on_fishing_list_rf_confidence as fishing_source_agreement, 
+	on_fishing_list_rf, 
     -- previous vessel lists
     on_fishing_list_best,
     on_fishing_list_sr,
@@ -589,6 +486,6 @@ SELECT DISTINCT
     -- NEW add predicted vessel characterists 
     rf_best_length_m,
     rf_best_tonnage_gt,
-	  rf_best_engine_power_kw,
+	rf_best_engine_power_kw,
     rf_max_speed_kn
-FROM all_vessels
+FROM av_populate_fields
