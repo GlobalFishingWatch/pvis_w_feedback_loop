@@ -62,14 +62,6 @@ WITH
     	FROM `world-fishing-827.scratch_willa_ttl100.poc_gfw_map_vessel_corrections`
     	WHERE Feedback_Action = 'Approved'
     	),
-
-    ### add in list of vessels from MMSI recycling 
-    source_problem_mmsi AS (
-    SELECT
-    	CAST(mmsi AS STRING) AS mmsi,
-    	reported_issue
-    	FROM
-    	`world-fishing-827.scratch_willa_ttl100.problem_mmsi_live_google_sheet`),
     
     ### vessel API initial table (step 1)
     ### TO UPDATE SOURCE TABLE ONCE WE GET BASE VESSEL INFO TABLE WORKING AS WE INTEND
@@ -332,12 +324,6 @@ WITH
                 FROM source_purse_seine_support_vessel_byyear_table as ps
                 WHERE ps.year = vi.year
             ) as in_support_list,
-            -- NEW flags if MMSI has been flagged for MMSI recycling
-            ssvid IN (
-                SELECT mmsi
-                FROM source_problem_mmsi
-                WHERE reported_issue = 'MMSI recycling'
-            ) as mmsi_recycling,
         FROM api_and_feedback 
             LEFT JOIN source_vi_ssvid_by_year as vi 
         		USING (ssvid, year)
@@ -471,8 +457,6 @@ SELECT DISTINCT
     potential_fishing_source,
     -- NEW add if shipname is likely indicative of year
     likely_gear AS shipname_indicates_likely_gear,
-    -- NEW add in MMSI recycling
-    mmsi_recycling,
     noisy_vessel,
     shipname_count,
     offsetting,
